@@ -42,6 +42,7 @@ __attribute__((weak)) void bsp_led_mark_dirty(void)
 {
 }
 
+
 __attribute__((weak)) esp_err_t bsp_button_init(void)
 {
     return ESP_ERR_NOT_SUPPORTED;

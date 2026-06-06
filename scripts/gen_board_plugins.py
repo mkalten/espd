@@ -36,11 +36,14 @@ _SUPPORTED_PERIPHERALS = {
 }
 
 def _gen_cmake_glue(data: dict, src: str) -> str:
+    # CMake REQUIRES uses the bare component name (no namespace slashes)
     bsp_component = data["bsp"]["component"]
     peripherals = data.get("peripherals") or []
+    no_ws2812 = data.get("bsp", {}).get("no_ws2812_leds", False)
     extra_srcs = ""
     if peripherals:
         extra_srcs = '\n            "espd_board_peripherals.c"'
+    no_led_block = ""
     return f"""# Auto-generated from {src} — do not edit.
 
 if(CONFIG_ESPD_BOARD_ESP_BSP_GLUE)
@@ -50,7 +53,7 @@ if(CONFIG_ESPD_BOARD_ESP_BSP_GLUE)
             "espd_bsp_io_glue.c"{extra_srcs}
         INCLUDE_DIRS "." "${{CMAKE_CURRENT_LIST_DIR}}"
         REQUIRES espd_integration {bsp_component}
-    )
+    ){no_led_block}
 else()
     idf_component_register()
 endif()
@@ -66,6 +69,83 @@ AUDIO_GLUE_C = """\
 #include "../espd_integration/espd_bsp_esp_bsp_audio.c"
 """
 
+# Variant for boards that need the IO expander initialised before the codec
+# regardless of BSP_CAPS_BUTTONS (e.g. Korvo-2 with TCA9554).
+AUDIO_GLUE_C_IO_EXPANDER = """\
+/*
+ * Auto-generated from {src} — do not edit.
+ *
+ * Like espd_bsp_esp_bsp_audio.c but always calls bsp_io_expander_init()
+ * before bsp_audio_init(), regardless of BSP_CAPS_BUTTONS.  Required for
+ * boards (e.g. Korvo-2) whose TCA9554 IO expander must be initialised so
+ * that the codec's I2C init does not time-out.
+ */
+#include "bsp/esp-bsp.h"
+#include "driver/i2s_std.h"
+#include "espd_bsp_audio.h"
+#include "esp_check.h"
+#include "esp_log.h"
+
+#ifndef BSP_AUDIO_MCLK_MULTIPLE
+#define BSP_AUDIO_MCLK_MULTIPLE I2S_MCLK_MULTIPLE_384
+#endif
+
+static const char *TAG = "espd_bsp";
+
+esp_err_t espd_bsp_audio_hw_init(const espd_bsp_audio_hw_params_t *params,
+    espd_bsp_audio_hw_t *hw)
+{{
+    i2s_std_config_t std_cfg;
+    i2s_slot_mode_t slot_mode;
+    uint32_t mclk_multiple;
+
+    ESP_RETURN_ON_FALSE(params && hw, ESP_ERR_INVALID_ARG, TAG, "null arg");
+
+    hw->spk = NULL;
+    hw->mic = NULL;
+
+    slot_mode = (params->channels >= 2) ? I2S_SLOT_MODE_STEREO
+                                        : I2S_SLOT_MODE_MONO;
+
+    std_cfg = (i2s_std_config_t){{
+        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(params->sample_rate_hz),
+        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(
+            I2S_DATA_BIT_WIDTH_16BIT, slot_mode),
+        .gpio_cfg = {{
+            .mclk = BSP_I2S_MCLK,
+            .bclk = BSP_I2S_SCLK,
+            .ws   = BSP_I2S_LCLK,
+            .dout = BSP_I2S_DOUT,
+            .din  = BSP_I2S_DSIN,
+            .invert_flags = {{
+                .mclk_inv = false,
+                .bclk_inv = false,
+                .ws_inv   = false,
+            }},
+        }},
+    }};
+
+    mclk_multiple = params->mclk_multiple ? params->mclk_multiple
+                                         : BSP_AUDIO_MCLK_MULTIPLE;
+    std_cfg.clk_cfg.mclk_multiple = mclk_multiple;
+
+    ESP_RETURN_ON_ERROR(bsp_i2c_init(), TAG, "bsp_i2c_init");
+    /* Always init IO expander — codec I2C hangs without it on this board. */
+    ESP_RETURN_ON_FALSE(bsp_io_expander_init() != NULL, ESP_FAIL, TAG,
+        "io expander");
+    ESP_RETURN_ON_ERROR(bsp_audio_init(&std_cfg), TAG, "bsp_audio_init");
+
+    hw->spk = bsp_audio_codec_speaker_init();
+    ESP_RETURN_ON_FALSE(hw->spk, ESP_FAIL, TAG, "speaker codec init");
+
+    hw->mic = bsp_audio_codec_microphone_init();
+    if (!hw->mic)
+        ESP_LOGW(TAG, "microphone codec init failed");
+
+    return ESP_OK;
+}}
+"""
+
 IO_GLUE_C = """\
 /*
  * Auto-generated from {src} — do not edit.
@@ -73,6 +153,22 @@ IO_GLUE_C = """\
  * Board-owned glue TU to keep component source ownership clean while
  * reusing shared espd_integration implementation.
  */
+#include "../espd_integration/espd_bsp_esp_bsp_io.c"
+"""
+
+# Variant for boards that own bsp_led_set() themselves (e.g. Korvo-2 with
+# led_indicator): suppress the WS2812-style bsp_led_* declarations in bsp_io.h
+# so they don't conflict with the BSP's own declaration.
+IO_GLUE_C_NO_LED = """\
+/*
+ * Auto-generated from {src} — do not edit.
+ *
+ * Like espd_bsp_esp_bsp_io.c but suppresses the WS2812 bsp_led_* declarations
+ * in bsp/bsp_io.h to avoid conflicts with BSPs that define their own
+ * bsp_led_set() (e.g. Korvo-2 uses led_indicator, not a LED strip).
+ */
+/* Suppress WS2812 bsp_led_* declarations — the BSP defines its own. */
+#define ESPD_BSP_IO_NO_LED_DECL
 #include "../espd_integration/espd_bsp_esp_bsp_io.c"
 """
 
@@ -284,6 +380,9 @@ def _gen_kconfig(data: dict, src: str) -> str:
 def _gen_idf_component_yml(data: dict, src: str) -> str:
     bsp = data["bsp"]
     comp = bsp["component"]
+    # registry_component allows a namespaced key like "espressif/foo" for the
+    # idf_component.yml dependency entry, while cmake REQUIRES uses comp (no /)
+    registry_comp = bsp.get("registry_component", comp)
     lines = [
         GENERATED_HEADER.format(src=src),
         'version: "0.1.0"\n',
@@ -292,7 +391,7 @@ def _gen_idf_component_yml(data: dict, src: str) -> str:
         '  idf: ">=6.0.1,<6.1"\n',
         "  espd_integration:\n",
         "    path: ../espd_integration\n",
-        f"  {comp}:\n",
+        f"  {registry_comp}:\n",
     ]
     if "git" in bsp:
         lines.append(f'    git: {bsp["git"]}\n')
@@ -526,8 +625,18 @@ def _generate_board(repo: Path, yaml_path: Path) -> Path:
         out_dir / "CMakeLists.txt",
         _gen_cmake_glue(data, rel_src),
     )
-    _write_if_changed(out_dir / "espd_bsp_audio_glue.c", AUDIO_GLUE_C.format(src=rel_src))
-    _write_if_changed(out_dir / "espd_bsp_io_glue.c", IO_GLUE_C.format(src=rel_src))
+    audio_tmpl = (
+        AUDIO_GLUE_C_IO_EXPANDER
+        if data.get("bsp", {}).get("io_expander_before_audio")
+        else AUDIO_GLUE_C
+    )
+    _write_if_changed(out_dir / "espd_bsp_audio_glue.c", audio_tmpl.format(src=rel_src))
+    io_tmpl = (
+        IO_GLUE_C_NO_LED
+        if data.get("bsp", {}).get("no_ws2812_leds")
+        else IO_GLUE_C
+    )
+    _write_if_changed(out_dir / "espd_bsp_io_glue.c", io_tmpl.format(src=rel_src))
     _write_if_changed(out_dir / "sdkconfig.defaults", _gen_sdkconfig_defaults(data, rel_src))
 
     io_cfg = _gen_io_config(data, rel_src)

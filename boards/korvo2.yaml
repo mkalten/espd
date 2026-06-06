@@ -1,0 +1,38 @@
+# ESPD board definition — source of truth for components/espd_board_korvo2/
+# Regenerated on every CMake configure (scripts/gen_board_plugins.py).
+
+id: korvo2
+name: ESP32-S3-Korvo-2
+target: esp32s3
+help: |
+  Espressif ESP32-S3-Korvo-2 multimedia board (ES7210 mic array,
+  ES8311 speaker, microSD, LCD, TCA9554 IO expander).
+  Uses esp_codec_dev with slow I2C (10kHz) for reliable codec init.
+
+bsp:
+  # Component name as used in CMake REQUIRES (managed_components dir uses __)
+  component: esp32_s3_korvo_2
+  # Full namespace for idf_component.yml registry dependency key
+  registry_component: espressif/esp32_s3_korvo_2
+  version: "5.0.0"
+  # TCA9554 IO expander must be init'd before the codec or I2C will hang
+  io_expander_before_audio: true
+  # Korvo-2 uses led_indicator (not WS2812 strip); suppress conflicting bsp_led_set decl
+  no_ws2812_leds: true
+
+features:
+  imply:
+    - ESPD_USE_ADC
+    - ESPD_USE_SDCARD
+    - ESPD_USE_AIN
+    - ESPD_USE_AOUT
+
+io:
+  buttons: [REC, MUTE, PLAY, SET, VOLDOWN, VOLUP]
+
+profile:
+  audio:
+    BSP_I2S_NUM: 1
+    BSP_I2C_NUM: 1
+  display:
+    BSP_CONFIG_NO_GRAPHIC_LIB: 1

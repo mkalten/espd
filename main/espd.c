@@ -214,7 +214,7 @@ void pdmain_print(const char *s)
 
 #if CONFIG_ESPD_USE_USB_OTG && CONFIG_ESPD_DEV_CDC_SYNC
     if (tinyusb_cdcacm_initialized(TINYUSB_CDC_ACM_0))
-        espd_serial_sync_write(s, strlen(s));
+        espd_usb_cdc_write(s, strlen(s));
     else
 #endif
         printf("%s", s);
@@ -301,7 +301,7 @@ void app_main(void)
 
 #if CONFIG_ESPD_DEV_SERIAL_SYNC
     espd_dev_init();
-    esp_log_set_vprintf(espd_serial_sync_log);
+    esp_log_set_vprintf(espd_usb_cdc_log_vprintf);
 #endif
 
 #if CONFIG_ESP_MAIN_TASK_STACK_SIZE < 16384

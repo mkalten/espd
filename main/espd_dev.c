@@ -25,9 +25,6 @@
 #include "tinyusb.h"
 #include "tinyusb_cdc_acm.h"
 #endif
-#if CONFIG_ESPD_DEV_SERIAL_SYNC && SOC_USB_SERIAL_JTAG_SUPPORTED
-#include "driver/usb_serial_jtag.h"
-#endif
 
 #include "espd.h"
 #include "espd_usb.h"
@@ -144,15 +141,9 @@ static size_t dev_rx_pop(uint8_t *out, size_t max)
 static void dev_drain_cdc_hw(void)
 {
 #if CONFIG_ESPD_DEV_SERIAL_SYNC
-#if SOC_USB_SERIAL_JTAG_SUPPORTED
-    int rx;
-    while ((rx = usb_serial_jtag_read_bytes(s_cdc_rx_buf, sizeof(s_cdc_rx_buf), pdMS_TO_TICKS(0))) > 0)
-        dev_rx_push(s_cdc_rx_buf, rx);
-#else
     int rx;
     while ((rx = uart_read_bytes(UART_NUM_0, s_cdc_rx_buf, sizeof(s_cdc_rx_buf), pdMS_TO_TICKS(0))) > 0)
         dev_rx_push(s_cdc_rx_buf, rx);
-#endif
 #elif CONFIG_ESPD_DEV_CDC_SYNC
     size_t rx;
 
@@ -170,15 +161,9 @@ static void dev_drain_cdc_hw(void)
 static void dev_drain_cdc_put(void)
 {
 #if CONFIG_ESPD_DEV_SERIAL_SYNC
-#if SOC_USB_SERIAL_JTAG_SUPPORTED
-    int rx;
-    while ((rx = usb_serial_jtag_read_bytes(s_cdc_rx_buf, sizeof(s_cdc_rx_buf), pdMS_TO_TICKS(0))) > 0)
-        dev_put_data(s_cdc_rx_buf, rx);
-#else
     int rx;
     while ((rx = uart_read_bytes(UART_NUM_0, s_cdc_rx_buf, sizeof(s_cdc_rx_buf), pdMS_TO_TICKS(0))) > 0)
         dev_put_data(s_cdc_rx_buf, rx);
-#endif
 #elif CONFIG_ESPD_DEV_CDC_SYNC
     size_t rx;
 
@@ -214,7 +199,7 @@ static void dev_reply(const char *msg)
     n = snprintf(line, sizeof(line), "%s\r\n", msg);
     if (n <= 0)
         return;
-    espd_serial_sync_write(line, (size_t)n);
+    espd_usb_cdc_write(line, (size_t)n);
 }
 
 static const char *dev_target_mount(dev_target_t target)
@@ -784,14 +769,6 @@ void espd_dev_init(void)
     dev_refresh_target();
 
 #if CONFIG_ESPD_DEV_SERIAL_SYNC
-#if SOC_USB_SERIAL_JTAG_SUPPORTED
-    /* Initialize USB Serial JTAG driver for chips with USJ support */
-    usb_serial_jtag_driver_config_t usj_config = {
-        .rx_buffer_size = 2048,
-        .tx_buffer_size = 2048,
-    };
-    usb_serial_jtag_driver_install(&usj_config);
-#else
     /* Initialize UART driver (safe to call if already installed by console) */
     uart_driver_install(UART_NUM_0, 2048, 2048, 0, NULL, 0);
     
@@ -808,7 +785,6 @@ void espd_dev_init(void)
     uart_param_config(UART_NUM_0, &uart_config);
 #endif
 #endif
-#endif
 
     if (xTaskCreatePinnedToCore(espd_dev_task, "espd_dev", ESPD_DEV_TASK_STACK, NULL,
             ESPD_DEV_TASK_PRIO, &s_dev_task, ESPD_DEV_TASK_CORE) != pdPASS) {
@@ -817,16 +793,11 @@ void espd_dev_init(void)
         return;
     }
 #if CONFIG_ESPD_DEV_CDC_SYNC
-    ESP_LOGI(TAG, "CDC dev sync: PUT/RELOAD -> %s (USB CDC)",
-        dev_target_mount(s_target));
-#elif CONFIG_ESPD_DEV_SERIAL_SYNC
-#if SOC_USB_SERIAL_JTAG_SUPPORTED
-    ESP_LOGI(TAG, "Serial dev sync: PUT/RELOAD -> %s (USB Serial JTAG)",
+    ESP_LOGI(TAG, "CDC dev sync: PUT/RELOAD -> %s",
         dev_target_mount(s_target));
 #else
     ESP_LOGI(TAG, "Serial dev sync: PUT/RELOAD -> %s (UART0)",
         dev_target_mount(s_target));
-#endif
 #endif
 }
 

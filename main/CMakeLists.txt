@@ -116,10 +116,6 @@ if(CONFIG_ESPD_USE_USB_OTG)
         esp_partition esp_driver_usb_serial_jtag)
 endif()
 
-if(CONFIG_ESPD_DEV_SERIAL_SYNC)
-    idf_component_optional_requires(PRIVATE esp_driver_usb_serial_jtag)
-endif()
-
 if(CONFIG_ESPD_USE_WIFI)
     target_sources(${COMPONENT_LIB} PRIVATE "../wifi/wifi.c" "../wifi/net.c")
     idf_component_get_property(_main_lib main COMPONENT_LIB)

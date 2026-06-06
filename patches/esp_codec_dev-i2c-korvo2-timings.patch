@@ -1,0 +1,13 @@
+--- a/managed_components/espressif__esp_codec_dev/platform/audio_codec_ctrl_i2c.c
++++ b/managed_components/espressif__esp_codec_dev/platform/audio_codec_ctrl_i2c.c
+@@ -12,8 +12,8 @@
+ #else
+ #define TICK_PER_MS portTICK_RATE_MS
+ #endif
+-#define DEFAULT_I2C_CLOCK         (100000)
+-#define DEFAULT_I2C_TRANS_TIMEOUT (100)
++#define DEFAULT_I2C_CLOCK         (10000)
++#define DEFAULT_I2C_TRANS_TIMEOUT (500)
+ 
+ #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 3, 0) && !CONFIG_CODEC_I2C_BACKWARD_COMPATIBLE
+ #include "driver/i2c_master.h"

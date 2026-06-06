@@ -27,7 +27,7 @@
 #include "tinyusb_console.h"
 #include "tinyusb_default_config.h"
 #endif
-#if (CONFIG_ESPD_USE_USB_OTG && CONFIG_SOC_USB_SERIAL_JTAG_SUPPORTED) || (CONFIG_ESPD_DEV_SERIAL_SYNC && SOC_USB_SERIAL_JTAG_SUPPORTED)
+#if CONFIG_ESPD_USE_USB_OTG && CONFIG_SOC_USB_SERIAL_JTAG_SUPPORTED
 #include "driver/usb_serial_jtag.h"
 #endif
 #if CONFIG_ESPD_DEV_CDC_SYNC
@@ -94,17 +94,13 @@ static void espd_usb_apply_msc_volume_label_when_ready(void)
 
 /* ─── CDC write (serialized for esp_log + protocol replies) ─── */
 
-void espd_serial_sync_write(const void *data, size_t len)
+void espd_usb_cdc_write(const void *data, size_t len)
 {
     if (!data || len == 0)
         return;
 
 #if CONFIG_ESPD_DEV_SERIAL_SYNC
-#if SOC_USB_SERIAL_JTAG_SUPPORTED
-    usb_serial_jtag_write_bytes(data, len, pdMS_TO_TICKS(100));
-#else
     uart_write_bytes(UART_NUM_0, data, len);
-#endif
 #elif CONFIG_ESPD_DEV_CDC_SYNC
     if (!tinyusb_cdcacm_initialized(TINYUSB_CDC_ACM_0) || !tud_mounted())
         return;
@@ -124,7 +120,12 @@ void espd_serial_sync_write(const void *data, size_t len)
 #endif
 }
 
-int espd_serial_sync_log(const char *fmt, va_list args)
+static void espd_usb_cdc_write_bytes(const char *data, size_t len)
+{
+    espd_usb_cdc_write(data, len);
+}
+
+int espd_usb_cdc_log_vprintf(const char *fmt, va_list args)
 {
     char buf[256];
     int n = vsnprintf(buf, sizeof(buf), fmt, args);
@@ -132,7 +133,7 @@ int espd_serial_sync_log(const char *fmt, va_list args)
         size_t w = (size_t)n;
         if (w >= sizeof(buf))
             w = sizeof(buf) - 1;
-        espd_serial_sync_write(buf, w);
+        espd_usb_cdc_write_bytes(buf, w);
     }
     return n;
 }
@@ -322,7 +323,7 @@ static bool usb_init_on_core0(void)
 
 #if CONFIG_ESPD_DEV_CDC_SYNC
     espd_dev_init();
-    esp_log_set_vprintf(espd_serial_sync_log);
+    esp_log_set_vprintf(espd_usb_cdc_log_vprintf);
 #elif CONFIG_ESPD_USB_CONSOLE_CDC
     err = tinyusb_console_init(TINYUSB_CDC_ACM_0);
     if (err != ESP_OK)

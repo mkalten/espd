@@ -20,9 +20,12 @@ CONFIG_PTHREAD_TASK_STACK_SIZE_DEFAULT=8192
 CONFIG_PTHREAD_TASK_PRIO_DEFAULT=5
 CONFIG_PTHREAD_TASK_CORE_DEFAULT=0
 
-# Wear levelling + TinyUSB MSC (when enabled): 4 KiB sectors, bufsize >= sector.
+# Wear levelling + TinyUSB MSC (when enabled): WL uses 4096-byte sectors.
+# NOTE: FATFS sector size must remain 512 for SD card compatibility (SD physical
+# sectors are always 512 bytes; FATFS_SECTOR_4096 causes mount to fail).
 CONFIG_WL_SECTOR_SIZE_4096=y
 CONFIG_TINYUSB_MSC_BUFSIZE=8192
+CONFIG_FATFS_SECTOR_512=y
 
 # ESP32-S3 CPU Frequency (240 MHz)
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y

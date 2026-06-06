@@ -113,12 +113,16 @@ help: |                            # optional Kconfig help
   ES8311 codec, SD card, WS2812 ring.
 
 bsp:                               # required — esp-bsp Component Manager dep
-  component: my_board_audio        # managed component name
+  component: my_board_audio        # managed component name (used in CMake REQUIRES)
+  registry_component: espressif/my_board_audio  # optional: namespaced key for idf_component.yml
+                                   # (use when upstream BSP is on the official registry)
   git: https://github.com/you/esp-bsp.git
   path: bsp/my_board_audio
   version: my-branch               # branch, tag, or commit
   # — or registry instead of git: —
   # version: "^1.0.0"
+  io_expander_before_audio: true   # optional: always init IO expander before bsp_audio_init()
+                                   # (needed for boards like Korvo-2 with TCA9554 expander)
 
 features:                          # optional — live menuconfig hints
   imply:
@@ -141,6 +145,31 @@ profile:                           # sdkconfig.defaults sections
 
 Profile keys may omit the `CONFIG_` prefix. Values are `y`/`n`, numbers, or
 quoted strings (e.g. `'"/sdcard"'`, `"0x1"`).
+
+### `bsp.registry_component` — official Espressif registry
+
+When the BSP is on the [Espressif Component Registry](https://components.espressif.com/)
+(not a git fork), set `registry_component: espressif/foo` so the full namespaced
+key appears in `idf_component.yml`.  The `component:` field still controls the
+bare name used in CMake `REQUIRES` (matching the directory created under
+`managed_components/espressif__foo/`).
+
+```yaml
+bsp:
+  component: esp32_s3_korvo_2
+  registry_component: espressif/esp32_s3_korvo_2
+  version: "5.0.0"
+```
+
+### `bsp.io_expander_before_audio` — forcing IO expander init
+
+Some boards (e.g. Korvo-2) route the codec's I2C lines through a TCA9554 IO
+expander. The BSP must call `bsp_io_expander_init()` **before** `bsp_audio_init()`
+or the codec I2C bus hangs. The generic glue only does this when `BSP_CAPS_BUTTONS`
+is defined; setting `io_expander_before_audio: true` generates a custom audio glue
+that always calls `bsp_io_expander_init()` unconditionally.
+
+
 
 ### Chip defaults (do not repeat in YAML)
 
@@ -221,6 +250,43 @@ idf.py set-target esp32s3 build
 `espd/boards/` before build — the **`espd` submodule** is not committed with those changes.
 
 Activate IDF v6.0.1 per [README.md](../README.md).
+
+### Patching managed components
+
+Some boards require tweaks to downloaded managed_components that cannot be upstreamed
+(e.g. timing constants, driver workarounds).  Use the standard `patch` workflow:
+
+1. Create a unified diff in `patches/` (relative to the project root):
+
+```bash
+# Example: slow down I2C clock for Korvo-2 codec reliability
+cp managed_components/foo/bar.c /tmp/bar.c.orig
+# edit the file, then:
+diff -u \
+  --label a/managed_components/foo/bar.c \
+  --label b/managed_components/foo/bar.c \
+  managed_components/foo/bar.c /tmp/bar.c.new \
+  > patches/foo-my-fix.patch
+```
+
+2. Add the patch name to the list in **`scripts/apply-managed-patches.sh`**.
+
+3. Apply after each `idf.py update-dependencies`:
+
+```bash
+./scripts/apply-managed-patches.sh
+```
+
+The script is idempotent — it skips already-applied patches and fails clearly
+when a patch does not apply (e.g. after a component version bump).
+
+**Currently active managed patches:**
+
+| Patch | Component | Effect |
+|-------|-----------|--------|
+| `esp_codec_dev-i2c-korvo2-timings.patch` | `espressif__esp_codec_dev` | I2C clock 100kHz→10kHz, timeout 100ms→500ms (Korvo-2 TCA9554 compatibility) |
+
+
 
 ## Pd I/O surface (core — not board-specific)
 
